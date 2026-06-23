@@ -1,0 +1,111 @@
+version: '3.8'
+
+services:
+  # Main Application
+  app:
+    build: .
+    container_name: resource-monitor
+    ports:
+      - "8000:8000"
+    environment:
+      - INFLUXDB_URL=http://influxdb:8086
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://monitor:password@postgres:5432/resource_monitor
+    depends_on:
+      - influxdb
+      - redis
+      - postgres
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - monitor_network
+
+  # Celery Worker
+  worker:
+    build: .
+    command: celery -A src.tasks worker --loglevel=info
+    environment:
+      - INFLUXDB_URL=http://influxdb:8086
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+      - influxdb
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - monitor_network
+
+  # InfluxDB for Time-Series Data
+  influxdb:
+    image: influxdb:2.7
+    container_name: monitor-influxdb
+    ports:
+      - "8086:8086"
+    environment:
+      - INFLUXDB_DB=resource_metrics
+      - INFLUXDB_ADMIN_USER=admin
+      - INFLUXDB_ADMIN_PASSWORD=adminpassword
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    restart: unless-stopped
+    networks:
+      - monitor_network
+
+  # PostgreSQL for Configuration & Metadata
+  postgres:
+    image: postgres:16-alpine
+    container_name: monitor-postgres
+    environment:
+      - POSTGRES_DB=resource_monitor
+      - POSTGRES_USER=monitor
+      - POSTGRES_PASSWORD=password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - monitor_network
+
+  # Redis for Caching & Task Queue
+  redis:
+    image: redis:7-alpine
+    container_name: monitor-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - monitor_network
+
+  # Grafana for Visualization (Optional)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: monitor-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - influxdb
+    restart: unless-stopped
+    networks:
+      - monitor_network
+
+volumes:
+  influxdb_data:
+  postgres_data:
+  redis_data:
+  grafana_data:
+
+networks:
+  monitor_network:
+    driver: bridge
